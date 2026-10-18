@@ -1,0 +1,23 @@
+name: chereda
+repo: https://github.com/kostyk348/chereda-hermes-plugin
+sha: REPLACE_WITH_FULL_40_CHAR_SHA
+description: >-
+  Череда in the Hermes desktop app: obligation loops instead of status cards. Each
+  loop shows whose move it is (customer or performer), the clock and deadline, the
+  class, the evidence (command, output digest, expected exit code) and the full
+  description. Moves are verbs — ask, promise, refuse (with a reason), declare with
+  proof, accept, object — as buttons; the panel only calls the real `череда` CLI, so
+  the rules stay in one place. A loop also carries a feed: participant reports and
+  notes that do not move the turn. Read-only apart from the verbs on loopback; no
+  self-update; requires the `череда` binary in PATH (cargo install --path .).
+maintainer: kostyk348
+tier: community
+category: productivity
+docs_url: https://github.com/kostyk348/chereda-hermes-plugin#readme
+version: "0.1.0"
+platforms: []
+capabilities:
+  provides_tools: []
+  provides_hooks: []
+  provides_middleware: []
+  requires_env: []

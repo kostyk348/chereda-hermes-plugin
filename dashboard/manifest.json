@@ -1,0 +1,8 @@
+{
+  "name": "chereda",
+  "label": "Череда",
+  "description": "Петли обязательств: чей ход, часы, доказательство и глаголы хода.",
+  "icon": "GitPullRequest",
+  "version": "0.1.0",
+  "api": "plugin_api.py"
+}
