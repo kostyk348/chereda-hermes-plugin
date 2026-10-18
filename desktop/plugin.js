@@ -11,7 +11,7 @@
  */
 
 import { host, usePluginI18n, useQuery } from '@hermes/plugin-sdk'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { jsx } from 'react/jsx-runtime'
 
 const ID = 'chereda'
@@ -85,7 +85,16 @@ const RU = {
   emptySay: 'пустое сообщение не отправить',
   emptyAbout: 'пустое описание не сохранить',
   failed: 'не вышло: {error}',
-  verifyFailed: 'проверка не прошла: {error}'
+  verifyFailed: 'проверка не прошла: {error}',
+  speakAs: 'пишу как',
+  asCustomer: 'заказчик ({who})',
+  asPerformer: 'делающий ({who})',
+  filterAll: 'все',
+  filterMine: 'на моём ходу',
+  filterTheirs: 'на ходу делающих',
+  filterLate: 'просрочено',
+  noMatch: 'под этот фильтр ничего не подходит',
+  toFeed: 'в ленту (Enter — отправить)'
 }
 
 const EN = {
@@ -156,7 +165,16 @@ const EN = {
   emptySay: 'an empty message is not sent',
   emptyAbout: 'an empty description is not saved',
   failed: 'failed: {error}',
-  verifyFailed: 'the check did not pass: {error}'
+  verifyFailed: 'the check did not pass: {error}',
+  speakAs: 'writing as',
+  asCustomer: 'customer ({who})',
+  asPerformer: 'performer ({who})',
+  filterAll: 'all',
+  filterMine: 'on my move',
+  filterTheirs: 'on performers',
+  filterLate: 'overdue',
+  noMatch: 'nothing matches this filter',
+  toFeed: 'to the feed (Enter sends)'
 }
 
 const LOCALES = { ru: RU, en: EN }
@@ -176,7 +194,15 @@ const GLOSSARY = ['ask', 'promise', 'refuse', 'declare', 'accept', 'object', 'wi
 
 const CSS = `
 .hc-page{padding:18px 22px 40px;max-width:1040px;margin:0 auto;overflow-y:auto;overflow-x:hidden;height:100%;scrollbar-gutter:stable}
-.hc-head{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:14px}
+.hc-head{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:10px;
+  position:sticky;top:0;z-index:3;background:var(--ui-bg,#12141a);padding:6px 0 8px}
+.hc-bar{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:12px;
+  position:sticky;top:38px;z-index:2;background:var(--ui-bg,#12141a);padding-bottom:6px}
+.hc-sep{width:1px;height:18px;background:var(--ui-border,#2a2f3a);margin:0 4px}
+.hc-chip{font:inherit;font-size:12px;color:var(--ui-text-tertiary,#8b93a7);background:transparent;
+  border:1px solid var(--ui-border,#2a2f3a);border-radius:999px;padding:2px 10px;cursor:pointer}
+.hc-chip:hover{color:inherit;border-color:var(--ui-accent,#3b82f6)}
+.hc-chip-on{color:#fff;background:var(--ui-accent,#3b82f6);border-color:var(--ui-accent,#3b82f6)}
 .hc-title{font-size:16px;font-weight:600;margin:0}
 .hc-sub{color:var(--ui-text-tertiary,#8b93a7);font-size:12.5px}
 .hc-btn{font:inherit;font-size:12.5px;color:inherit;background:var(--ui-surface,#1b1e26);
@@ -307,7 +333,7 @@ function Glossary({ t, open, toggle }) {
   })
 }
 
-function Loop({ loop, onAct, busy, t }) {
+function Loop({ loop, onAct, busy, t, role }) {
   const [draft, setDraft] = useState({})
   const [fullAbout, setFullAbout] = useState(true)
   const [editAbout, setEditAbout] = useState(false)
@@ -317,6 +343,8 @@ function Loop({ loop, onAct, busy, t }) {
   const late = loop.remaining <= 0
   const linked = loop.linked
   const available = actionsFor(loop)
+  /** От чьего имени пишем: владелец — заказчик, ответ агента — делающий. */
+  const speaker = role === 'performer' ? loop.performer : loop.customer
 
   const run = (verb) => {
     const params = { id: loop.id }
@@ -329,7 +357,7 @@ function Loop({ loop, onAct, busy, t }) {
       return
     }
     if (verb === 'сказать') {
-      params.who = loop.performer
+      params.who = speaker
       params.text = draft.say || ''
       onAct({ verb, params, loop })
 
@@ -409,9 +437,15 @@ function Loop({ loop, onAct, busy, t }) {
         children: [
           jsx('input', {
             className: 'hc-input',
-            placeholder: t('sayPlaceholder'),
+            placeholder: `${t('sayPlaceholder')} · ${t('speakAs')} ${speaker}`,
             value: draft.say || '',
-            onChange: (e) => setDraft({ ...draft, say: e.target.value })
+            onChange: (e) => setDraft({ ...draft, say: e.target.value }),
+            onKeyDown: (e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault()
+                run('сказать')
+              }
+            }
           }),
           jsx('button', { className: 'hc-btn', disabled: busy, onClick: () => run('сказать'), children: t('say') })
         ]
@@ -524,6 +558,16 @@ function CheredaPage({ ctx }) {
   const [inline, setInline] = useState({})
   const [note, setNote] = useState('')
   const [gloss, setGloss] = useState(false)
+  const [role, setRole] = useState('customer')
+  const [filter, setFilter] = useState('all')
+
+  // заметка не должна висеть вечно: гаснет сама
+  useEffect(() => {
+    if (!note) return undefined
+    const timer = setTimeout(() => setNote(''), 8000)
+
+    return () => clearTimeout(timer)
+  }, [note])
 
   const query = useQuery({ queryKey: [ID, 'loops'], queryFn: () => ctx.rest('/loops'), refetchInterval: 5000 })
 
@@ -587,6 +631,25 @@ function CheredaPage({ ctx }) {
   const loops = (query.data?.loops || []).map((l) => ({ ...l, inline: inline[l.id] || null }))
   const mine = loops.filter((l) => l.turn === 'customer').length
   const theirs = loops.filter((l) => l.turn === 'performer').length
+  const lateCount = loops.filter((l) => l.remaining <= 0).length
+  const performers = [...new Set(loops.map((l) => l.performer))].filter(Boolean)
+  const customers = [...new Set(loops.map((l) => l.customer))].filter(Boolean)
+  const who = role === 'performer' ? performers[0] || '' : customers[0] || ''
+
+  const visible = loops.filter((l) => {
+    if (filter === 'mine') return l.turn === 'customer'
+    if (filter === 'theirs') return l.turn === 'performer'
+    if (filter === 'late') return l.remaining <= 0
+
+    return true
+  })
+
+  const chip = (id, label, count) =>
+    jsx('button', {
+      className: `hc-chip${filter === id ? ' hc-chip-on' : ''}`,
+      onClick: () => setFilter(id),
+      children: `${label}${count === undefined ? '' : ` ${count}`}`
+    })
 
   return jsx('div', {
     className: 'hc-page',
@@ -599,11 +662,32 @@ function CheredaPage({ ctx }) {
           jsx('button', { className: 'hc-btn', disabled: busy, onClick: verify, children: t('verify') })
         ]
       }),
+      jsx('div', {
+        className: 'hc-bar',
+        children: [
+          chip('all', t('filterAll'), loops.length),
+          chip('mine', t('filterMine'), mine),
+          chip('theirs', t('filterTheirs'), theirs),
+          chip('late', t('filterLate'), lateCount),
+          jsx('span', { className: 'hc-sep' }),
+          jsx('span', { className: 'hc-sub', children: t('speakAs') }),
+          jsx('button', {
+            className: `hc-chip${role === 'customer' ? ' hc-chip-on' : ''}`,
+            onClick: () => setRole('customer'),
+            children: fill(t('asCustomer'), { who: who || '—' })
+          }),
+          jsx('button', {
+            className: `hc-chip${role === 'performer' ? ' hc-chip-on' : ''}`,
+            onClick: () => setRole('performer'),
+            children: fill(t('asPerformer'), { who: performers[0] || '—' })
+          })
+        ]
+      }),
       jsx(Glossary, { t, open: gloss, toggle: () => setGloss(!gloss) }),
       note ? jsx('div', { className: 'hc-note', children: note }) : null,
-      loops.length
-        ? jsx('div', { children: loops.map((loop) => jsx(Loop, { key: loop.id, loop, onAct: act, busy, t })) })
-        : jsx('div', { className: 'hc-empty', children: t('empty') })
+      visible.length
+        ? jsx('div', { children: visible.map((loop) => jsx(Loop, { key: loop.id, loop, onAct: act, busy, t, role })) })
+        : jsx('div', { className: 'hc-empty', children: loops.length ? t('noMatch') : t('empty') })
     ].filter(Boolean)
   })
 }

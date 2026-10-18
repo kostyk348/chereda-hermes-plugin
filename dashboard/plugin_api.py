@@ -37,7 +37,16 @@ PARAMS = {
     "id", "who", "text", "reason", "proof", "dir", "expect",
     "for", "case", "customer", "performer", "class", "about", "now",
 }
-VERB = re.compile(r"^[а-яёa-z]{3,20}$")
+VERB = re.compile(r"[а-яёa-z]{3,20}")
+
+
+def valid_verb(verb: str) -> bool:
+    """Глагол — целая строка: fullmatch, а не match.
+
+    `$` в Python пропускает строку с переводом строки на конце («петли\n»),
+    поэтому проверяем всю строку целиком.
+    """
+    return bool(VERB.fullmatch(verb))
 
 
 def binary() -> str | None:
@@ -200,7 +209,7 @@ def circle(who: str) -> dict[str, Any]:
 def act(payload: dict = Body(...)) -> dict[str, Any]:
     """Сделать ход: глагол + параметры. Отвечает тем, что напечатал CLI."""
     verb = str(payload.get("verb") or "").strip()
-    if not VERB.match(verb):
+    if not valid_verb(verb):
         raise HTTPException(400, f"глагол «{verb}» не похож на глагол Череда")
     args = [verb]
     for key, value in (payload.get("params") or {}).items():
