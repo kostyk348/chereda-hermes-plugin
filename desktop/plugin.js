@@ -59,6 +59,7 @@ const CSS = `
 .hc-desc{white-space:pre-wrap;font-size:12.5px;color:#cfd6e4;background:var(--ui-bg,#12141a);border:1px solid var(--ui-border,#2a2f3a);border-radius:7px;padding:8px 10px;max-height:220px;overflow-y:auto;scrollbar-gutter:stable}
 .hc-cmt-worker{border-left-color:#3b82f6;background:rgba(59,130,246,.10)}
 .hc-desc-full{max-height:none}
+.hc-edit{width:100%;min-height:140px;font:inherit;font-size:12.5px;resize:vertical}
 .hc-empty{border:1px dashed var(--ui-border,#2a2f3a);border-radius:10px;padding:16px;color:var(--ui-text-tertiary,#8b93a7)}
 .hc-warn{border:1px solid #7f1d1d;background:#2a1215;border-radius:9px;padding:12px 14px;margin-bottom:14px;color:#fecaca;font-size:12.5px}
 .hc-ev{font-family:var(--font-mono,monospace);font-size:11.5px;color:#cfd6e4;
@@ -134,6 +135,7 @@ function Loop({ loop, onAct, busy }) {
   const [draft, setDraft] = useState({})
   const [openBody, setOpenBody] = useState(false)
   const [fullAbout, setFullAbout] = useState(true)
+  const [editAbout, setEditAbout] = useState(false)
   const need = loop.inline ? NEEDS[loop.inline] : null
   const state = STATE_WORD[loop.state] || loop.state
   const late = loop.remaining <= 0
@@ -143,6 +145,19 @@ function Loop({ loop, onAct, busy }) {
     const params = { id: loop.id }
     const value = draft[verb]
 
+    if (verb === 'описать') {
+      params.who = loop.customer
+      params.text = draft.about ?? loop.about ?? ''
+
+      if (!String(params.text).trim()) {
+        onAct({ verb: 'hint', loop, text: `#${loop.id}: пустое описание не сохранить` })
+
+        return
+      }
+      onAct({ verb, params, loop })
+
+      return
+    }
     if (verb === 'сказать') {
       params.who = loop.performer
       params.text = draft.say || ''
@@ -161,19 +176,34 @@ function Loop({ loop, onAct, busy }) {
     onAct({ verb, params, loop })
   }
 
-  const about = loop.about
-    ? jsx(Section, {
-        title: `описание (${loop.about.length} симв.)`,
-        children: [
-          jsx('div', { className: `hc-desc${fullAbout ? ' hc-desc-full' : ''}`, children: loop.about }),
-          jsx('button', {
-            className: 'hc-btn hc-more',
-            onClick: () => setFullAbout(!fullAbout),
-            children: fullAbout ? 'свернуть описание' : 'развернуть описание целиком'
+  const about = jsx(Section, {
+    title: loop.about ? `описание (${loop.about.length} симв.)` : 'описание (пусто)',
+    children: editAbout
+      ? [
+          jsx('textarea', {
+            className: 'hc-desc hc-edit',
+            value: draft.about ?? loop.about ?? '',
+            onChange: (e) => setDraft({ ...draft, about: e.target.value })
+          }),
+          jsx('div', {
+            className: 'hc-actions',
+            children: [
+              jsx('button', { className: 'hc-btn', disabled: busy, onClick: () => run('описать'), children: 'сохранить описание' }),
+              jsx('button', { className: 'hc-btn', disabled: busy, onClick: () => setEditAbout(false), children: 'отмена' })
+            ]
           })
         ]
-      })
-    : null
+      : [
+          jsx('div', { className: `hc-desc${fullAbout ? ' hc-desc-full' : ''}`, children: loop.about || 'описания нет — напиши, что именно нужно и чем мерить' }),
+          jsx('div', {
+            className: 'hc-actions',
+            children: [
+              jsx('button', { className: 'hc-btn hc-more', onClick: () => setFullAbout(!fullAbout), children: fullAbout ? 'свернуть описание' : 'развернуть целиком' }),
+              jsx('button', { className: 'hc-btn hc-more', onClick: () => setEditAbout(true), children: 'править описание' })
+            ]
+          })
+        ]
+  })
 
   const feed = jsx(Section, {
     title: `лента${loop.feed && loop.feed.length ? ` (${loop.feed.length})` : ''}`,
@@ -358,6 +388,7 @@ function CheredaPage({ ctx }) {
       const line = (out.stdout || out.stderr || '').trim().split('\n')[0] || `код ${out.code}`
       setNote(line)
       setInline({ ...inline, [loop.id]: null })
+      setEditAbout(false)
       await query.refetch()
     } catch (err) {
       setNote(`не вышло: ${err?.message || err}`)

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -29,19 +30,14 @@ INSTALL_HINT = (
     "`cargo install --path .` (или укажи путь в CHEREDA_BIN)"
 )
 
-#: Глаголы, которые разрешено звать из интерфейса. Всё остальное — отказ.
-VERBS = {
-    "просить": {"case", "customer", "performer", "class"},
-    "обещать": {"id", "who", "for"},
-    "отказать": {"id", "who", "reason"},
-    "сделать": {"id", "who", "proof", "dir", "expect"},
-    "принять": {"id", "who"},
-    "возразить": {"id", "who", "reason"},
-    "снять": {"id", "who"},
-    "сказать": {"id", "who", "text"},
-    "проверить": {"id"},
-    "следы": {"id"},
+#: Какие ПАРАМЕТРЫ разрешено передавать глаголу. Список глаголов здесь больше не
+#: хранится: его знает сам CLI и он же отказывает неизвестному — иначе каждая
+#: новая команда требовала бы перезапуска шлюза, а два списка разъезжались бы.
+PARAMS = {
+    "id", "who", "text", "reason", "proof", "dir", "expect",
+    "for", "case", "customer", "performer", "class", "about", "now",
 }
+VERB = re.compile(r"^[а-яёa-z]{3,20}$")
 
 
 def binary() -> str | None:
@@ -203,15 +199,14 @@ def circle(who: str) -> dict[str, Any]:
 @router.post("/act")
 def act(payload: dict = Body(...)) -> dict[str, Any]:
     """Сделать ход: глагол + параметры. Отвечает тем, что напечатал CLI."""
-    verb = str(payload.get("verb") or "")
-    if verb not in VERBS:
-        raise HTTPException(400, f"глагол «{verb}» не разрешён")
-    allowed = VERBS[verb]
+    verb = str(payload.get("verb") or "").strip()
+    if not VERB.match(verb):
+        raise HTTPException(400, f"глагол «{verb}» не похож на глагол Череда")
     args = [verb]
     for key, value in (payload.get("params") or {}).items():
         name = str(key)
-        if name not in allowed:
-            raise HTTPException(400, f"у «{verb}» нет параметра «{name}»")
+        if name not in PARAMS:
+            raise HTTPException(400, f"параметр «{name}» не разрешён")
         if value is None or value == "":
             continue
         args += [f"--{name}", str(value)]
