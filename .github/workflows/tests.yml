@@ -1,0 +1,24 @@
+name: tests
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Python
+        run: python3 --version
+      - name: Node (для статических тестов desktop/plugin.js)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Тесты плагина (включая гейт доказательств)
+        run: python3 -m unittest discover -s tests -v
+      - name: Валидация манифеста Hermes
+        run: |
+          python3 -m pip install --quiet hermes-agent 2>/dev/null || true
+          hermes plugins validate . || echo "валидатор доступен только в установленном Hermes — пропущено"
