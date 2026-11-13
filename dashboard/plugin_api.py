@@ -116,11 +116,12 @@ def health() -> dict[str, Any]:
 # карточки, к которой привык владелец.
 
 import re as _re
+from concurrent.futures import ThreadPoolExecutor
 import time as _time
 
 _TASK_ID = _re.compile(r"\bt_[0-9a-f]{8}\b")
 _LINK_CACHE: dict[str, tuple[float, dict]] = {}
-_LINK_TTL = 60.0
+_LINK_TTL = 600.0
 
 
 def linked_task_id(cause: str) -> str | None:
@@ -186,23 +187,53 @@ def kanban_task(task_id: str) -> dict | None:
     return out
 
 
-def with_links(payload: dict) -> dict:
-    for loop in payload.get("loops") or []:
-        task_id = linked_task_id(loop.get("cause") or "")
-        loop["linked"] = kanban_task(task_id) if task_id else None
+def with_links(payload: dict, fetch: bool = True) -> dict:
+    """Подтянуть сводки карточек — параллельно, без ожидания по одной.
+
+    Раньше здесь был последовательный цикл: девять петель давали девять запусков
+    `hermes kanban show` (каждый — новый процесс, ~3 с) и ответ не успевал в
+    отведённые панели 30 секунд. Теперь потоки и общий кеш.
+    """
+    loops = payload.get("loops") or []
+    if not fetch:
+        for loop in loops:
+            loop["linked"] = None
+
+        return payload
+
+    ids = {}
+    for loop in loops:
+        found = linked_task_id(loop.get("cause") or "")
+        if found:
+            ids[id(loop)] = found
+
+    if not ids:
+        for loop in loops:
+            loop["linked"] = None
+
+        return payload
+
+    unique = sorted(set(ids.values()))
+    with ThreadPoolExecutor(max_workers=min(8, len(unique))) as pool:
+        resolved = dict(zip(unique, pool.map(kanban_task, unique)))
+
+    for loop in loops:
+        task_id = ids.get(id(loop))
+        loop["linked"] = resolved.get(task_id) if task_id else None
+
     return payload
 
 
 @router.get("/loops")
-def loops() -> dict[str, Any]:
-    """Открытые петли, а к петлям с id карточки — ещё и сводка этой карточки."""
-    return with_links(loops_json("петли"))
+def loops(linked: int = 1) -> dict[str, Any]:
+    """Открытые петли. `?linked=0` — не трогать канбан вообще (быстрый путь)."""
+    return with_links(loops_json("петли"), fetch=bool(linked))
 
 
 @router.get("/circle/{who}")
-def circle(who: str) -> dict[str, Any]:
+def circle(who: str, linked: int = 1) -> dict[str, Any]:
     """Петли, где ход у `who`."""
-    return with_links(loops_json("круг", "--who", who))
+    return with_links(loops_json("круг", "--who", who), fetch=bool(linked))
 
 
 @router.post("/act")

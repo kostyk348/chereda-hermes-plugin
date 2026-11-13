@@ -4,13 +4,26 @@
 Череда хранит «чей ход», но сама никого не будит — поэтому лента петель была
 пустой: агентов никто не спрашивал. Этот скрипт закрывает разрыв в обе стороны:
 
-* петля, где ход у делающего и дела ещё нет в очереди → заводится карточка
-  воркеру (assignee = делающий), в теле — дело, описание и требование дать
+* петля, где ход у делающего и дела ей ещё нет в очереди → заводится карточка
+  воркеру (assignee = делающий), в теле — дело, описание и просьба привести
   строку `ДОКАЗАТЕЛЬСТВО: <команда>`;
 * карточка закрыта, а петля ещё не принята → отчёт воркера уходит в **ленту
-  петли**, а найденное доказательство проигрывается через `череда сделать`
-  (то есть рукопожатие остаётся настоящим: команда запускается, отпечаток
-  пишется).
+  петли**, а доказательство проигрывается через `череда сделать` — но только
+  если команда есть в списке разрешённых.
+
+# Почему доказательство не запускается само
+
+Команду в отчёте пишет модель. Передать её в `sh -c` без согласия человека —
+значит превратить текст модели в команду на хосте в обход согласований Hermes.
+Поэтому:
+
+* разрешённые команды лежат в `.bridge-allow.txt` рядом с реестром, по одной на
+  строку, `#` — комментарий, в конце можно `*` (префикс);
+* файла нет → список пуст → **ни одна** команда модели не выполняется;
+* неразрешённое доказательство не теряется: оно уходит в ленту петли как
+  «ждёт разрешения», ход остаётся у делающего;
+* человек разрешает командой `--approve "<команда>"` и следующий проход моста
+  проигрывает доказательство по-настоящему.
 
 Ничего не выдумывает: если доказательства в отчёте нет, так и говорит в ленте.
 Запуск: `chereda_bridge.py` (разово) или `--dry` (только показать решения).
@@ -32,18 +45,25 @@ CHEREDA = Path(
 )
 CARD = re.compile(r"\bt_[0-9a-f]{8}\b")
 PROOF = re.compile(r"ДОКАЗАТЕЛЬСТВО:\s*(.+)")
+ALLOW_NAME = ".bridge-allow.txt"
 INSTRUCTION = (
     "\n\n---\n"
     "Это петля Череда `#{loop}`. Когда закончишь, приведи в отчёте отдельной "
     "строкой:\n\n    ДОКАЗАТЕЛЬСТВО: <команда, которую можно запустить и которая "
     "подтвердит результат>\n\n"
-    "Отчёт попадёт в ленту петли, а команда будет запущена и записана с "
-    "отпечатком вывода. Без строки доказательства петля не закроется.\n"
+    "Отчёт попадёт в ленту петли. Команда будет запущена и записана с "
+    "отпечатком вывода только если владелец заранее разрешил её "
+    "(`chereda_bridge.py --approve`); иначе она уйдёт в ленту как «ждёт "
+    "разрешения» и ход останется у тебя.\n"
 )
 
 
 def state_path(ledger: Path) -> Path:
     return ledger / ".bridge-state.json"
+
+
+def allow_path(ledger: Path) -> Path:
+    return ledger / ALLOW_NAME
 
 
 def load_state(ledger: Path) -> dict:
@@ -59,6 +79,59 @@ def save_state(ledger: Path, state: dict) -> None:
         state_path(ledger).write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
     except OSError:
         pass
+
+
+def normalize_command(cmd: str) -> str:
+    """Схлопнуть пробелы: «a  b» и «a b» — одна команда."""
+    return " ".join((cmd or "").split())
+
+
+def load_allow(ledger: Path) -> list[str]:
+    try:
+        raw = allow_path(ledger).read_text(encoding="utf-8")
+    except OSError:
+        return []
+    entries: list[str] = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            entries.append(line)
+    return entries
+
+
+def is_allowed(cmd: str, allow: list[str]) -> bool:
+    """Разрешена ли команда. Пустой список — не разрешено ничего."""
+    target = normalize_command(cmd)
+    if not target:
+        return False
+    for entry in allow:
+        pattern = normalize_command(entry)
+        if not pattern:
+            continue
+        if pattern.endswith("*"):
+            if target.startswith(pattern[:-1].rstrip()):
+                return True
+        elif pattern == target:
+            return True
+    return False
+
+
+def approve(ledger: Path, cmd: str) -> bool:
+    """Добавить команду в разрешённые. Возвращает True, если она новая."""
+    cmd = normalize_command(cmd)
+    if not cmd:
+        return False
+    allow = load_allow(ledger)
+    if is_allowed(cmd, allow):
+        return False
+    path = allow_path(ledger)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(cmd + "\n")
+    except OSError as err:
+        raise SystemExit(f"не записать {path}: {err}")
+    return True
 
 
 def fingerprint(text: str) -> str:
@@ -129,6 +202,32 @@ def act(ledger: Path, *args: str, dry: bool) -> None:
     print(f"  {mark} череда {printable}\n      → {text}")
 
 
+def handle_proof(ledger: Path, loop: dict, proof: str | None, allow: list[str], dry: bool) -> bool:
+    """Решить судьбу доказательства из отчёта. True — команда запущена.
+
+    Здесь и только здесь model-written текст мог бы стать командой на хосте,
+    поэтому единственный путь к `череда сделать` — совпадение с разрешённым
+    списком. Всё остальное уходит в ленту как заявка на разрешение.
+    """
+    performer = loop.get("performer") or "?"
+    if proof and is_allowed(proof, allow):
+        act(ledger, "сделать", "--id", str(loop["id"]), "--who", performer,
+            "--proof", proof, dry=dry)
+        return True
+    if proof:
+        print("  ⚠ доказательство модели не запускаю: команды нет в разрешённых")
+        act(ledger, "сказать", "--id", str(loop["id"]), "--who", performer,
+            "--text",
+            "доказательство ждёт разрешения владельца: "
+            f"`{proof}`. Разрешить: `chereda_bridge.py --approve \"{proof}\"`",
+            dry=dry)
+    else:
+        act(ledger, "сказать", "--id", str(loop["id"]), "--who", performer,
+            "--text", "доказательства в отчёте нет — ход оставляю за делающим",
+            dry=dry)
+    return False
+
+
 def create_card(loop: dict, dry: bool) -> str | None:
     body = (loop.get("about") or "").strip()
     body += INSTRUCTION.format(loop=loop["id"])
@@ -168,13 +267,39 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Мост Череда ↔ воркеры")
     parser.add_argument("--ledger", default=os.environ.get("CHEREDA_LEDGER", "~/.chereda"))
     parser.add_argument("--dry", action="store_true", help="только показать решения")
+    parser.add_argument(
+        "--approve",
+        action="append",
+        default=[],
+        metavar="КОМАНДА",
+        help="разрешить доказательство (можно несколько раз); без этого ни одна "
+        "команда из отчёта модели не выполняется",
+    )
+    parser.add_argument("--allow", action="store_true", help="показать разрешённые доказательства")
     args = parser.parse_args()
     ledger = Path(args.ledger).expanduser()
 
+    for cmd in args.approve:
+        added = approve(ledger, cmd)
+        print(f"{'разрешено' if added else 'уже разрешено'}: {normalize_command(cmd)}")
+    if args.allow:
+        allow = load_allow(ledger)
+        if not allow:
+            print(f"разрешённых доказательств нет ({allow_path(ledger)})")
+        for entry in allow:
+            print(f"  {entry}")
+        return 0
+
+    allow = load_allow(ledger)
     state = load_state(ledger)
     items = loops(ledger)
     opened = [l for l in items if l.get("turn") != "none"]
     print(f"петель открытых: {len(opened)} ({ledger})")
+    if not allow:
+        print(
+            "разрешённых доказательств нет: команды из отчётов будут уходить в ленту "
+            f"как «ждёт разрешения» ({allow_path(ledger)})"
+        )
 
     for loop in opened:
         print(f"#{loop['id']} {loop['cause'][:64]}")
@@ -199,13 +324,7 @@ def main() -> int:
                 else:
                     act(ledger, "сказать", "--id", str(loop["id"]), "--who", loop["performer"],
                         "--text", "карточка закрыта, но отчёта в ней нет", dry=args.dry)
-                if proof:
-                    act(ledger, "сделать", "--id", str(loop["id"]), "--who", loop["performer"],
-                        "--proof", proof, dry=args.dry)
-                else:
-                    act(ledger, "сказать", "--id", str(loop["id"]), "--who", loop["performer"],
-                        "--text", "доказательства в отчёте нет — ход оставляю за делающим",
-                        dry=args.dry)
+                handle_proof(ledger, loop, proof, allow, args.dry)
                 if not args.dry:
                     state[str(loop["id"])] = mark
                     save_state(ledger, state)
