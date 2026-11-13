@@ -1,4 +1,19 @@
+<div align="center">
+
+<img src="docs/banner.svg" alt="chereda-hermes-plugin banner" width="1000">
+
 # Череда для Hermes
+
+### Череда для Hermes: петли обязательств вместо карточек
+
+[![Release](https://img.shields.io/github/v/release/kostyk348/chereda-hermes-plugin?sort=semver&color=0ea5e9&label=release)](https://github.com/kostyk348/chereda-hermes-plugin/releases)
+[![License](https://img.shields.io/badge/license-MIT-green)](https://github.com/kostyk348/chereda-hermes-plugin/blob/main/LICENSE)
+[![Language](https://img.shields.io/badge/lang-JavaScript-blueviolet)](https://github.com/kostyk348/chereda-hermes-plugin)
+
+</div>
+
+---
+
 
 Петли обязательств вместо карточек: у каждой петли видно **чей ход**, сколько
 осталось до срока и чем дело доказано. Глаголы — `просить`, `обещать`, `сделать`,
