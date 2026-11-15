@@ -26,8 +26,8 @@ from fastapi import APIRouter, Body, HTTPException
 router = APIRouter()
 
 INSTALL_HINT = (
-    "бинарь «череда» не найден в PATH. Поставь его из репозитория Череда: "
-    "`cargo install --path .` (или укажи путь в CHEREDA_BIN)"
+    "The Chereda binary was not found in PATH. Build it from the Chereda "
+    "repository (`cargo install --path .`) or point CHEREDA_BIN at it."
 )
 
 #: Какие ПАРАМЕТРЫ разрешено передавать глаголу. Список глаголов здесь больше не
@@ -78,7 +78,7 @@ def call(args: list[str], timeout: int = 60) -> dict[str, Any]:
     except FileNotFoundError:
         raise HTTPException(503, INSTALL_HINT)
     except subprocess.TimeoutExpired:
-        raise HTTPException(504, "Череда не ответила за отведённое время")
+        raise HTTPException(504, "Chereda did not answer within the time limit")
     return {
         "code": done.returncode,
         "stdout": done.stdout,
@@ -90,11 +90,11 @@ def call(args: list[str], timeout: int = 60) -> dict[str, Any]:
 def loops_json(*args: str) -> dict[str, Any]:
     result = call([*args, "--json"])
     if result["code"] != 0:
-        raise HTTPException(500, result["stderr"].strip() or "Череда вернула ошибку")
+        raise HTTPException(500, result["stderr"].strip() or "Chereda returned an error")
     try:
         return json.loads(result["stdout"])
     except json.JSONDecodeError as err:
-        raise HTTPException(500, f"Череда вернула не JSON: {err}")
+        raise HTTPException(500, f"Chereda returned invalid JSON: {err}")
 
 
 @router.get("/health")
@@ -241,12 +241,12 @@ def act(payload: dict = Body(...)) -> dict[str, Any]:
     """Сделать ход: глагол + параметры. Отвечает тем, что напечатал CLI."""
     verb = str(payload.get("verb") or "").strip()
     if not valid_verb(verb):
-        raise HTTPException(400, f"глагол «{verb}» не похож на глагол Череда")
+        raise HTTPException(400, f"'{verb}' is not a Chereda verb")
     args = [verb]
     for key, value in (payload.get("params") or {}).items():
         name = str(key)
         if name not in PARAMS:
-            raise HTTPException(400, f"параметр «{name}» не разрешён")
+            raise HTTPException(400, f"parameter '{name}' is not allowed")
         if value is None or value == "":
             continue
         args += [f"--{name}", str(value)]

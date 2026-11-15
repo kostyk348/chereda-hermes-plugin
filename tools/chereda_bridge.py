@@ -18,7 +18,8 @@
 Поэтому:
 
 * разрешённые команды лежат в `.bridge-allow.txt` рядом с реестром, по одной на
-  строку, `#` — комментарий, в конце можно `*` (префикс);
+  строку, `#` — комментарий, в конце можно `*` (префикс — только для простой
+  команды без `;`, `|`, `&`, `$`, обратных кавычек, `>` и `<`);
 * файла нет → список пуст → **ни одна** команда модели не выполняется;
 * неразрешённое доказательство не теряется: оно уходит в ленту петли как
   «ждёт разрешения», ход остаётся у делающего;
@@ -36,13 +37,11 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
-CHEREDA = Path(
-    "/home/lain/.hermes/profiles/libraressa/workspace/chereda/target/debug/chereda"
-)
 CARD = re.compile(r"\bt_[0-9a-f]{8}\b")
 PROOF = re.compile(r"ДОКАЗАТЕЛЬСТВО:\s*(.+)")
 ALLOW_NAME = ".bridge-allow.txt"
@@ -56,6 +55,20 @@ INSTRUCTION = (
     "(`chereda_bridge.py --approve`); иначе она уйдёт в ленту как «ждёт "
     "разрешения» и ход останется у тебя.\n"
 )
+
+
+def binary() -> Path | None:
+    """Где бинарь Череда: `CHEREDA_BIN`, иначе PATH.
+
+    Путь не зашит: в каталоге плагин запускается на чужой машине, где нашего
+    `target/debug` нет. Порядок тот же, что в `dashboard/plugin_api.py`.
+    """
+    explicit = os.environ.get("CHEREDA_BIN")
+    if explicit:
+        path = Path(explicit).expanduser()
+        return path if path.exists() else None
+    found = shutil.which("череда") or shutil.which("chereda")
+    return Path(found) if found else None
 
 
 def state_path(ledger: Path) -> Path:
@@ -99,17 +112,39 @@ def load_allow(ledger: Path) -> list[str]:
     return entries
 
 
+#: Что превращает строку в цепочку команд для `sh -c`.
+SHELL_METACHARS = frozenset(";|&$`><\n\r")
+
+
+def has_shell_meta(cmd: str) -> bool:
+    return any(ch in SHELL_METACHARS for ch in cmd)
+
+
 def is_allowed(cmd: str, allow: list[str]) -> bool:
-    """Разрешена ли команда. Пустой список — не разрешено ничего."""
-    target = normalize_command(cmd)
+    """Разрешена ли команда. Пустой список — не разрешено ничего.
+
+    Префиксная запись (`python3 -m unittest *`) — это разрешение на семейство
+    команд, поэтому она не должна давать дорогу цепочкам: строка с `;`, `|`,
+    `&`, `$`, обратной кавычкой, `>`, `<` или переводом строки под префикс не
+    подходит. Совпадение — по границе слова: `cargo test *` не разрешает
+    `cargo testing`, а точная запись по-прежнему сравнивается целиком.
+    """
+    raw = cmd or ""
+    target = normalize_command(raw)
     if not target:
         return False
+    # normalize_command схлопывает пробелы — и перевод строки тоже, поэтому
+    # опасные символы ищем на исходной строке, а не только на приведённой
+    dangerous = has_shell_meta(raw) or has_shell_meta(target)
     for entry in allow:
         pattern = normalize_command(entry)
         if not pattern:
             continue
         if pattern.endswith("*"):
-            if target.startswith(pattern[:-1].rstrip()):
+            prefix = pattern[:-1].rstrip()
+            if not prefix or dangerous:
+                continue
+            if target == prefix or target.startswith(prefix + " "):
                 return True
         elif pattern == target:
             return True
@@ -144,7 +179,13 @@ def run(cmd: list[str], timeout: int = 120) -> tuple[int, str, str]:
 
 
 def chereda(ledger: Path, *args: str, timeout: int = 120) -> tuple[int, str, str]:
-    return run([str(CHEREDA), *args, "--ledger", str(ledger)], timeout)
+    found = binary()
+    if not found:
+        raise SystemExit(
+            "бинарь «череда» не найден: поставь его (`cargo install --path .`) "
+            "или укажи путь в CHEREDA_BIN"
+        )
+    return run([str(found), *args, "--ledger", str(ledger)], timeout)
 
 
 def loops(ledger: Path) -> list[dict]:

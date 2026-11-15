@@ -127,7 +127,7 @@ class ResultHandling(unittest.TestCase):
         with self.assertRaises(Exception) as ctx:
             self.api.loops_json("сор")
         self.assertEqual(getattr(ctx.exception, "status_code", None), 500)
-        self.assertIn("не JSON", getattr(ctx.exception, "detail", ""))
+        self.assertIn("invalid JSON", getattr(ctx.exception, "detail", ""))
 
     def test_timeout_is_a_504(self) -> None:
         with self.assertRaises(Exception) as ctx:
